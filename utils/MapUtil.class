@@ -1,0 +1,137 @@
+package com.vfuchong.sptsm.citysmartcard.suzhou.utils;
+
+import java.beans.BeanInfo;
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
+import java.lang.reflect.Method;
+import java.util.*;
+
+public class MapUtil {
+    public static void main(String[] args) {
+        Map<String, String> map = new TreeMap<String, String>();
+        map.put("KFC", "kfc");
+        map.put("WNBA", "wnba");
+        map.put("NBA", "nba");
+        map.put("CBA", "cba");
+        Map<String, String> resultMap = sortMapByKey(map); // 按Key进行排序
+        for (Map.Entry<String, String> entry : resultMap.entrySet()) {
+            System.out.println(entry.getKey() + " " + entry.getValue());
+        }
+    }
+
+    /**
+     * 使用 Map按key进行排序
+     *
+     * @param map
+     * @return
+     */
+    public static Map<String, String> sortMapByKey(Map<String, String> map) {
+        if (map == null || map.isEmpty()) {
+            return null;
+        }
+        Map<String, String> sortMap = new TreeMap<String, String>(
+                new MapKeyComparator());
+        sortMap.putAll(map);
+        return sortMap;
+    }
+
+    public static Map<String, String> createSortMap() {
+        return new TreeMap<String, String>(new MapKeyComparator());
+    }
+
+    /**
+     * object To map 过滤 空值 并排序
+     *
+     * @param obj
+     * @return
+     * @throws Exception
+     */
+    public static Map<String, String> objectToMap(Object obj) throws Exception {
+        if (obj == null)
+            return null;
+
+        Map<String, String> map = new TreeMap<String, String>(new MapKeyComparator());
+
+        BeanInfo beanInfo = Introspector.getBeanInfo(obj.getClass());
+        PropertyDescriptor[] propertyDescriptors = beanInfo.getPropertyDescriptors();
+        for (PropertyDescriptor property : propertyDescriptors) {
+            String key = property.getName();
+            if (key.compareToIgnoreCase("class") == 0) {
+                continue;
+            }
+            Method getter = property.getReadMethod();
+            Object value = getter != null ? getter.invoke(obj) : null;
+            String str = String.valueOf(value);
+            if (value == null || str.length() == 0) {
+                continue;
+            }
+            map.put(key, str);
+        }
+
+        return map;
+    }
+
+    /**
+     * object To map 过滤 空值 并对KEY排序
+     *
+     * @param obj
+     * @return
+     * @throws Exception
+     */
+    public static Map<String, Object> objectToMapAndSort(Object obj) throws Exception {
+        if (obj == null)
+            return null;
+
+        Map<String, Object> map = new TreeMap<String, Object>(
+                new MapKeyComparator());
+
+        BeanInfo beanInfo = Introspector.getBeanInfo(obj.getClass());
+        PropertyDescriptor[] propertyDescriptors = beanInfo.getPropertyDescriptors();
+        for (PropertyDescriptor property : propertyDescriptors) {
+            String key = property.getName();
+            if (key.compareToIgnoreCase("class") == 0) {
+                continue;
+            }
+            Method getter = property.getReadMethod();
+            Object value = getter != null ? getter.invoke(obj) : null;
+            if (value == null || StringUtil.isEmpty(String.valueOf(value))) {
+                continue;
+            }
+            map.put(key, value);
+        }
+        return map;
+    }
+
+    public static String map2KeyValueStr(Map<String, String> map,boolean flag) {
+        if (map == null || map.isEmpty()) {
+            return "";
+        }
+        Set<String> keySet = map.keySet();
+        StringBuilder sb = new StringBuilder();
+        for (String key : keySet) {
+            if(StringUtil.isEmpty(map.get(key))) {
+                continue;
+            }
+            if(flag){
+                if ("cardNo".equals(key)){
+                    continue;
+                }
+                sb.append(key).append("=").append(map.get(key)).append("&");
+            }else {
+                sb.append(key.toUpperCase()).append("=").append(map.get(key)).append("&");
+            }
+        }
+        if(sb.length() >0){
+            String s = sb.toString();
+            return s.substring(0,s.length()-1);
+        }
+        return "";
+    }
+}
+
+// 比较器类
+class MapKeyComparator implements Comparator<String> {
+    public int compare(String str1, String str2) {
+        return str1.compareTo(str2);
+    }
+}
