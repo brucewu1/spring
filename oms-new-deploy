@@ -1,0 +1,66 @@
+#!/bin/bash
+#Time
+#desc:
+
+set -m
+source_dir=/app/deploy/vfc_oms_new
+bak_location=${source_dir}/oms_bak
+fileName=sptsm-oms.jar
+usage="start|stop|restart|status"
+
+# check tomcat running status
+check_status() {
+    pid=`ps -ef|grep -w ${fileName}|grep -v 'grep'|awk '{print $2}'|xargs`
+    # 这里判断要使用[[ ]]或者使用""将字符串抱起来，防止字符串为空时的逻辑错误
+    if [[ -n ${pid} ]]; then
+        echo "${fileName} is running, pid is ${pid}"
+    else 
+        echo "${fileName} was stopped"
+    fi
+}
+
+start_server() {
+    echo "startup server..."
+    cd ${source_dir}
+    # 删除catalina.out日志
+
+    nohup java -jar ${fileName} > /dev/null 2>&1 &    
+    echo ">>> bootstrap $fileNmae successed PID=$! <<<" 
+}
+
+stop_server() {
+    pid=`ps -ef|grep -w ${fileName}|grep -v 'grep'|awk '{print $2}'|xargs`
+    # 这里判断要使用[[ ]]或者使用""将字符串抱起来，防止字符串为空时的逻辑错误
+    if [[ -n ${pid} ]]; then
+        echo "current server pid is ${pid}, begin kill..."
+	kill $pid
+	sleep 2
+	
+	pid=`ps -ef|grep -w ${fileName}|grep -v 'grep'|awk '{print $2}'|xargs`
+	if [[ -n ${pid} ]]; then
+	    echo "force kill server, pid is ${pid}"
+	    kill -9 ${pid}
+	    sleep 2
+	fi
+    else 
+        echo "server was poweroff,do not need repeat operation"
+    fi
+} 
+case $1 in 
+    "start")
+        start_server
+        ;;
+    "stop")
+        stop_server
+        ;;
+    "restart")
+        stop_server
+        start_server
+        ;;
+    "status")
+        check_status
+        ;;
+    *)
+        echo "Usage: $0 [$usage]"
+        ;;
+esac
