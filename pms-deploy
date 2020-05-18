@@ -1,0 +1,434 @@
+#!/bin/bash
+#Time 2020.01.06
+#author: Francis.zz
+
+set -m
+
+# 脚本名
+readonly SCRIPT_NAME=`basename $0`
+
+# 初始化参数，解析输入参数后调用
+init() {
+    APP_SRC_DIR=/app/sptsm-pms
+    module_name=sptsm-pms-web
+    APP_RELEASE_DIR=/app/sptsm_deploy/${module_name}
+    APP_NAME="${module_name}.jar"
+    APP_BAK_DIR=${APP_RELEASE_DIR}/bak
+    LOG_BASE="/app/biz_logs/${module_name}"
+    GC_LOG_DIR=$LOG_BASE/gc_log
+    bak_file_num=3
+    #　启动参数
+    JAVA_OPTS="-server -Xms512M -Xmx512M -XX:MaxMetaspaceSize=256M -Xmn350M \
+               -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled \
+               -XX:+UseCMSInitiatingOccupancyOnly -XX:CMSInitiatingOccupancyFraction=70 \
+               -XX:+ScavengeBeforeFullGC -XX:+CMSScavengeBeforeRemark \
+               -XX:+PrintGCDateStamps -verbose:gc -XX:+PrintGCDetails -Xloggc:${GC_LOG_DIR}/gc_%t.log \
+               -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${GC_LOG_DIR}/heapDump_%t.hprof"
+    #RUN_ARGS="--server.port=8086"
+    active_profile=uat
+    MIN_JDK_VERSION="1.8"
+
+    # 字符串指令，使用eval执行，其中$, `, \符号需要转义
+    PID="ps -ef|grep -w ${APP_NAME}|grep -v 'grep'|awk '{print \$2}'|xargs"
+
+    # git params
+    # GIT_BRANCH="master"
+    if [ ! $GIT_BRANCH ] ;then
+        GIT_BRANCH="master"
+    else
+       echo "you input branch is $GIT_BRANCH"
+    fi
+
+
+    # package cmd
+    BUILD_CMD="clean package -Dmaven.test.skip=true -pl ${module_name} -am -Dspring-boot.run.profiles=${active_profile}"
+
+    if [[ -z "$CATALINA_OUT" ]] ; then
+      CATALINA_OUT="$LOG_BASE"/logs/
+    fi
+    catalina_log="${CATALINA_OUT}/catalina.out"
+}
+
+# check jdk version
+check_jdk_version() {
+    if [[ -n "$java_home" ]] && [[ -x "$java_home/bin/java" ]];  then
+        JAVA_EXEC="$java_home/bin/java"
+    elif type -p java; then
+        JAVA_EXEC=java
+    else
+        echo "not found java"
+        exit 1
+    fi
+
+    if [[ "$JAVA_EXEC" ]]; then
+        version=$("$JAVA_EXEC" -version 2>&1 | awk -F '"' '/version/ {print $2}')
+        echo use jdk version "$version"
+        if [[ "$version" < ${MIN_JDK_VERSION} ]]; then
+            echo jdk version is less than ${MIN_JDK_VERSION}
+            exit 1
+        fi
+    fi
+}
+
+# pull code
+pull_code() {
+    echo "pull latest code from git branch [${GIT_BRANCH}] for app dir [${APP_SRC_DIR}]"
+    cd ${APP_SRC_DIR}
+    git checkout ${GIT_BRANCH}
+    git pull
+    if [[ $? -ne 0 ]]; then
+        echo "pull latest code failed, please check..."
+        exit 1
+    fi
+}
+
+# build app
+build_app() {
+    if [[ -z "${JAVA_EXEC}" ]] || [[ ! -x "${JAVA_EXEC}" ]]; then
+        check_jdk_version
+    fi
+    echo "start build project and package app jar from src path [${APP_SRC_DIR}]"
+    cd ${APP_SRC_DIR}
+    if [[ -n "${custom_build_cmd}" ]]; then
+        BUILD_CMD=${custom_build_cmd#mvn}
+    elif [[ -n "${ext_build_args}" ]]; then
+        BUILD_CMD="${BUILD_CMD} ${ext_build_args}"
+    fi
+    echo "use package command is [${BUILD_CMD}]"
+    mvn ${BUILD_CMD}
+    if [[ $? -ne 0 ]]; then
+        echo "app build failed, please check..."
+        exit 1
+    fi
+}
+
+# check app running status
+check_status() {
+    local -r pid=`eval ${PID}`
+    if [[ -n ${pid} ]]; then
+        echo "${APP_NAME} is running, pid is ${pid}"
+    else
+        echo "${APP_NAME} was stopped"
+    fi
+}
+
+# cp target app to release path, and backup old released app
+transfer_and_backup() {
+    local -r target_app=${APP_SRC_DIR}/${module_name}/target/${APP_NAME}
+
+    if [[ ! -f ${target_app} ]]; then
+        echo "not found target app"
+        exit 1
+    fi
+    if [[ ! -d ${APP_RELEASE_DIR} ]]; then
+        echo "release dir:${APP_RELEASE_DIR} not exist, now create it"
+        mkdir -p ${APP_RELEASE_DIR}
+    fi
+    cd ${APP_RELEASE_DIR}/
+
+    cur_time=`date '+%Y%m%d%H%M%S'`
+    local -r release_app=${APP_RELEASE_DIR}/${APP_NAME}
+    # 备份旧的发布APP
+    if [[ -f ${release_app} ]]; then
+        echo "backup old release app file to backup dir ${APP_BAK_DIR}"
+        if [[ ! -d ${APP_BAK_DIR} ]]; then
+            echo "backup dir:${APP_BAK_DIR} not exist, now create it"
+            mkdir -p ${APP_BAK_DIR}
+        fi
+        bak_file_name=${APP_BAK_DIR}/${APP_NAME%.*}_${cur_time}.${APP_NAME##*.}
+        cp -f ${release_app} ${bak_file_name}
+
+        if [[ $? -ne 0 ]]; then
+            echo "backup failed..."
+            exit 1
+        fi
+        echo "success backup app file:${bak_file_name}"
+        manage_bak_file
+    fi
+
+    # 将打包的目标文件替换发布文件
+    cp -f ${target_app} ${APP_RELEASE_DIR}/
+    if [[ $? -ne 0 ]]; then
+        echo "transfer ${target_app} to release dir ${APP_RELEASE_DIR} failed ..."
+        exit 1
+    fi
+}
+
+start_server() {
+    local -r pid=`eval ${PID}`
+    if [[ -n ${pid} ]]; then
+        echo "${APP_NAME} is running, pid is ${pid}, Start aborted."
+        exit 1
+    fi
+
+    if [[ ! -d ${CATALINA_OUT} ]]; then
+        mkdir -p ${CATALINA_OUT}
+    fi
+    if [[ ! -d ${GC_LOG_DIR} ]]; then
+        mkdir -p ${GC_LOG_DIR}
+    fi
+    touch "$catalina_log"
+    if [[ -z "${JAVA_EXEC}" ]] || [[ ! -x "${JAVA_EXEC}" ]]; then
+        check_jdk_version
+    fi
+    echo "startup server..."
+    cd ${APP_RELEASE_DIR}/
+
+    nohup ${JAVA_EXEC} -jar ${JAVA_OPTS} ${APP_NAME} ${RUN_ARGS} --spring.profiles.active=${active_profile} \
+        >> ${catalina_log} 2>&1 &
+
+    # 打开日志，一段时间后自动关闭
+    if [[ $? -ne 0 ]]; then
+        echo "server $APP_NAME start failed."
+        exit 1
+    fi
+    sleep 15 &
+    timerPid=$!
+    echo "server $APP_NAME Started."
+    sleep 1
+    tail -fn 500 --pid=$timerPid "$catalina_log"
+}
+
+manage_bak_file() {
+    # delete extra bak file
+    cd ${APP_RELEASE_DIR}/bak
+    cur_bak_num=`ls -l | wc -l`
+    if [[ ${cur_bak_num} -gt $[${bak_file_num}+1] ]]; then
+        remove_bak_num=$[${cur_bak_num}-1-${bak_file_num}]
+        echo "remove ${remove_bak_num} backup files."
+        rm -r $(ls -rt | head -n${remove_bak_num})
+    fi
+}
+
+stop_server() {
+    local pid=`eval ${PID}`
+    if [[ -z ${pid} ]]; then
+        echo "server ${APP_NAME} is not running, Stop aborted."
+        return
+    fi
+
+    echo "current server pid is ${pid}, begin kill..."
+    kill ${pid} >/dev/null 2>&1
+    sleep 8
+    if [[ $? -ne 0 ]]; then
+        echo "kill failed. Attempting to signal the process to stop through OS signal."
+        kill -15 ${pid} >/dev/null 2>&1
+        sleep 8
+    fi
+
+    pid=`eval ${PID}`
+    if [[ -z ${pid} ]]; then
+        echo "server ${APP_NAME} Stopped."
+        sleep 3
+        return
+    fi
+    while [[ -n ${pid} ]]; do
+        echo "force kill server ${APP_NAME}, pid is ${pid}"
+        kill -9 ${pid}
+        sleep 3
+        pid=`eval ${PID}`
+        if [[ -z ${pid} ]]; then
+            echo "server ${APP_NAME} stopped"
+            sleep 3
+            break
+        fi
+    done
+}
+
+deploy_server() {
+    transfer_and_backup
+    stop_server
+    start_server
+}
+
+usage() {
+    local -r exit_code="$1"
+    shift
+    [ -n "$exit_code" -a "$exit_code" != 0 ] && local -r out=/dev/stderr || local -r out=/dev/stdout
+
+    (( $# > 0 )) && { echo "$SCRIPT_NAME"; echo; } > $out
+
+    > $out cat <<EOF
+Usage: "$SCRIPT_NAME" [start|stop|restart|status|pullAndDeploy|build] [OPTION]...
+Pull and Release latest code. Start or Stop server with jar.
+Example:
+  "$SCRIPT_NAME" start           # start server only
+  "$SCRIPT_NAME" stop            # stop server
+  "$SCRIPT_NAME" status          # check server
+  "$SCRIPT_NAME" restart         # restart server only
+  "$SCRIPT_NAME" pullAndDeploy   # pull latest code, build and package jar, release jar and backup old jar
+  "$SCRIPT_NAME" build           # pull latest code, build and package jar, but not release
+
+Usage opts control:
+  -j, --java-home <dir>         java environment of run server.
+  -O, --java-opts <opts>        jdk or jvm startup options of server.
+                                eg: "-server -Xms2048M -Xmx2048M" .
+  -R, --run-args  <args>        tomcat run options of server.
+                                eg: --server.port=8080.如果有多个参数, 使用""包裹
+  -T, --release-dir <dir>       app部署目录.
+  -S, --src-dir <dir>           app源码目录.
+  -b, --branch <branchName>     app发布分支.默认为 master.
+  -a, --active <profile>        激活的profile.默认为 uat
+  -m, --module-name <name>      发布app的模块名.此为必传参数.
+  -e, --ext-args <args>         打包 app模块的额外参数.
+  -C, --custom-build-cmd <cmd>  自定义打包参数，配置该参数后会覆盖上面的-e参数
+  -n, --app-name <appName>      发布app的jar名称.默认为module-name.jar.
+Miscellaneous:
+  -h, --help                display this help and exit.
+EOF
+
+    exit $exit_code
+}
+
+parse_args() {
+    # 控制输入参数格式，不能去掉
+    ARGS=`getopt -n "$SCRIPT_NAME" -o m:j:a:b:e:n:O:R:T:S:C:h -l java-home:,java-opts:,run-args:,release-dir:,src-dir:,branch:,active:,module-name:,ext-args:,custom-build-cmd:,app-name:,help -- "$@"`
+
+    # 输入参数解析失败，则输出usage信息
+    [ $? -ne 0 ] && { echo; usage 1; }
+    # set 会重新排列参数的顺序
+    eval set -- "${ARGS}"
+
+    #echo "all args: $@"
+
+    while true; do
+        case "$1" in
+        -j|--java-home)
+            java_home="$2"
+            shift 2
+            ;;
+        -O|--java-opts)
+            JAVA_OPTS="$2"
+            shift 2
+            ;;
+        -R|--run-args)
+            RUN_ARGS="$2"
+            shift 2
+            ;;
+        -T|--release-dir)
+            APP_RELEASE_DIR="$2"
+            shift 2
+            ;;
+        -S|--src-dir)
+            APP_SRC_DIR="$2"
+            shift 2
+            ;;
+        -b|--branch)
+            GIT_BRANCH="$2"
+            shift 2
+            ;;
+        -a|--active)
+            active_profile="$2"
+            shift 2
+            ;;
+        -m|--module-name)
+            module_name="$2"
+            shift 2
+            ;;
+        -e|--ext-args)
+            ext_build_args="$2"
+            shift 2
+            ;;
+        -C|--custom-build-cmd)
+            custom_build_cmd="$2"
+            shift 2
+            ;;
+        -n|--app-name)
+            APP_NAME="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --)
+            shift
+            break
+            ;;
+        "")
+            break
+            ;;
+        esac
+echo $GIT_BRANCH
+    done
+
+    #check_must_args
+    # init params
+    init
+}
+
+print_args() {
+    echo "APP_SRC_DIR: ${APP_SRC_DIR}"
+    echo "APP_RELEASE_DIR: ${APP_RELEASE_DIR}"
+    echo "APP_NAME: ${APP_NAME}"
+    echo "APP_BAK_DIR: ${APP_BAK_DIR}"
+    echo "JAVA_OPTS: ${JAVA_OPTS}"
+    echo "RUN_ARGS: ${RUN_ARGS}"
+    echo "active_profile: ${active_profile}"
+    echo "java_home: ${java_home}"
+    echo "GIT_BRANCH: ${GIT_BRANCH}"
+    echo "PID: ${PID}"
+    echo "module_name: ${module_name}"
+    echo "ext_build_args: ${ext_build_args}"
+    echo "custom_build_cmd: ${custom_build_cmd}"
+    echo "BUILD_CMD: ${BUILD_CMD}"
+    echo "catalina_log: ${catalina_log}"
+}
+
+check_must_args() {
+    if [[ -z ${module_name} ]];then
+        echo "必须指定模块名."
+        exit 1
+    fi
+}
+
+# main
+if [[ -n $1 ]];then
+    case $1 in
+        "start")
+            shift
+            parse_args "$@"
+            start_server
+            ;;
+        "stop")
+            shift
+            parse_args "$@"
+            stop_server
+            ;;
+        "restart")
+            shift
+            parse_args "$@"
+            stop_server
+            start_server
+            ;;
+        "status")
+            shift
+            parse_args "$@"
+            check_status
+            ;;
+        "pullAndDeploy")
+            shift
+            parse_args "$@"
+            pull_code
+            build_app
+            deploy_server
+            ;;
+        "build")
+            shift
+            parse_args "$@"
+            pull_code
+            build_app
+            ;;
+        "test")
+            shift
+            parse_args "$@"
+            print_args
+            ;;
+        *)
+            usage
+            ;;
+    esac
+else
+    usage
+fi
+
+#check_jdk_version
