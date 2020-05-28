@@ -1,0 +1,193 @@
+#!/bin/bash
+#Time
+#desc:
+#不传参数时为自动部署脚本，解压war包、备份war、启动tomcat；
+#可以传参使用:script [start/stop/restart] 
+#使用前注意替换项目部署路径deploy_home，tomcat路径tomcat_basehome(推荐一键替换%s/sptsm/sptsm/g，sptsm为替换后的名称)，解压的包名war_Name
+set -m 
+log_time=`date +[%Y-%m-%d]%H:%M:%S`
+
+###manual_properties###
+tomcat_basehome=/app/tomcat_sptsm
+deploy_home=/app/deploy/vfc_sptsm
+#tomcat_port=8080
+shell_environment=/bin/bash
+war_source_dir=${deploy_home}/sptsm_source
+deploy_location=${deploy_home}/sptsm
+bak_location=${deploy_home}/sptsm_bak
+# 解压war包名
+war_Name=sptsm-server-0.0.1-SNAPSHOT.war
+# 保留备份文件数量
+bak_file_num=5
+usage="start|stop|restart|status|deploy|deployAndStart|isrun"
+###manual_properties###
+
+
+#update server environment
+# echo "********************************** ${log_time} *************************************"
+# echo "updating server environment start"
+# export JAVA_HOME=/usr/java/jdk1.7.0_80
+# export JRE_HOME=/usr/java/jdk1.7.0_80/jre
+# export PATH=$JAVA_HOME/bin:$PATH 
+# export CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar/
+# echo "updating server environment end"
+
+#build check funcation
+stop_tomcat_deprecated(){
+    echo "check tomcat status..."
+    netstat -ant|grep ${tomcat_port} > /dev/null 
+    t=$?
+    if [ $t -eq 0 ]; then
+        echo "tomcat is running....port is ${tomcat_port}"
+        echo "shutdown tomcat begin..."
+        ${shell_environment} ${tomcat_basehome}/bin/shutdown.sh
+        echo "shutdown tomcat end"
+        sleep 5
+    elif [ $t -ne 0 ];then 
+        echo "tomcat is poweroff"
+        sleep 1
+    fi
+}
+
+stop_tomcat() {
+    pid=`ps -ef|grep 'tomcat'|grep -w ${tomcat_basehome}|grep -v 'grep'|awk '{print $2}'|xargs`
+    # 这里判断要使用[[ ]]或者使用""将字符串抱起来，防止字符串为空时的逻辑错误
+    if [[ -n ${pid} ]]; then
+        echo "current tomcat pid is ${pid}"
+        ${shell_environment} ${tomcat_basehome}/bin/shutdown.sh
+		sleep 3
+		pid=`ps -ef|grep 'tomcat'|grep -w ${tomcat_basehome}|grep -v 'grep'|awk '{print $2}'|xargs`
+		if [[ -n ${pid} ]]; then
+			ps -ef|grep 'tomcat'|grep -w ${tomcat_basehome}|grep -v 'grep'|awk '{print $2}'|xargs kill -9
+			sleep 2
+		fi
+    else 
+        echo "tomcat was poweroff,do not need repeat operation"
+    fi
+}
+
+# check tomcat running status
+check_status() {
+    pid=`ps -ef|grep 'tomcat'|grep -w ${tomcat_basehome}|grep -v 'grep'|awk '{print $2}'|xargs`
+    # 这里判断要使用[[ ]]获取使用""将字符串抱起来，防止字符串为空时的逻辑错误
+    if [[ -n ${pid} ]]; then
+        echo "${tomcat_basehome##*/} is running, pid is ${pid}"
+    else 
+        echo "tomcat was stopped"
+    fi
+}
+
+check_run() {
+    pid=`ps -ef|grep 'tomcat'|grep -w ${tomcat_basehome}|grep -v 'grep'|awk '{print $2}'|xargs`
+    # 这里判断要使用[[ ]]获取使用""将字符串抱起来，防止字符串为空时的逻辑错误
+    if [[ -n ${pid} ]]; then
+        echo "${tomcat_basehome##*/} is running, pid is ${pid}"
+        return 0
+    else
+        return 1
+    fi
+}
+
+unzip_backup_war() {
+    cur_time=`date '+%Y%m%d%H%M%S'`
+    if [ -a $war_source_dir/${war_Name} ];then
+        echo "remvoe old deploy file:${deploy_home}/sptsm"
+        rm -rf $deploy_home/sptsm
+        echo "unzip ${war_source_dir}/${war_Name}..."
+        unzip $war_source_dir/${war_Name} -d $deploy_home/sptsm
+     
+        #transfer application package
+        echo "backup war file to ${bak_location}"
+        if [ ! -d $bak_location ];then
+            echo "create dir $bak_location..."
+            mkdir $bak_location 
+        fi
+
+        if [ -a $bak_location/$war_Name ];then
+            mv $bak_location/$war_Name $bak_location/${war_Name%.*}_${cur_time}.${war_Name##*.}
+            mv $war_source_dir/${war_Name} $bak_location/${war_Name}
+        else
+            mv $war_source_dir/${war_Name} $bak_location/${war_Name}     
+        fi
+    else
+        echo "file $war_source_dir/${war_Name} not exsit,please check."
+        exit 1 
+    fi
+}
+
+manage_bak_file() {
+    # delete extra bak file
+    cd ${deploy_home}/sptsm_bak
+    cur_bak_num=`ls -l | wc -l`
+    if [[ ${cur_bak_num} > $[${bak_file_num}+1] ]]; then
+        remove_bak_num=$[${cur_bak_num}-1-${bak_file_num}]
+        echo "remove ${remove_bak_num} backup files."
+        rm -r $(ls -rt | head -n${remove_bak_num})
+    fi
+}
+
+start_tomcat() {
+    #reboot tomcat 
+    echo "startup tomcat..."
+    cd ${tomcat_basehome}
+    # 删除catalina.out日志
+    rm -f logs/*
+    
+    sleep 15 &
+    timerPid=$!
+    ${shell_environment} bin/startup.sh
+    
+    tail -fn 500 --pid=$timerPid logs/catalina.out
+}
+
+deploy_app() {
+    #check tomcat status invoke function
+    if [ -a $war_source_dir/${war_Name} ];then
+        stop_tomcat
+    else
+        echo "file $war_source_dir/${war_Name} not exsit,please check."
+        exit 1
+    fi
+    unzip_backup_war
+    manage_bak_file     
+    sleep 2 
+    if [ $1 ];then
+        echo "begin boot tomcat application..."
+        start_tomcat    
+    else
+        echo "仅部署并备份程序,请使用启动指令手动启动服务!"  
+    fi
+}
+
+if [[ -n $1 ]];then 
+    case $1 in 
+        "start")
+            start_tomcat
+            ;;
+        "stop")
+            stop_tomcat
+            ;;
+        "restart")
+            stop_tomcat
+            start_tomcat
+	    check_run
+            ;;
+        "status")
+            check_status
+            ;;
+	"isrun")
+            check_run
+            ;;
+        "deploy")
+            deploy_app
+            ;;
+        "deployAndStart")
+            deploy_app true
+            ;;  
+        *)
+            echo "Usage: $0 [$usage]"
+            ;;
+    esac
+else 
+    echo "Usage: $0 [$usage]"
+fi
