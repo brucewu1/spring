@@ -1,0 +1,72 @@
+CREATE DEFINER=`vfc_sptsm_qa`@`%` FUNCTION `getSequenceValue`(v_seq_name VARCHAR(50)) RETURNS int(11)
+begin 
+DECLARE maxVal,minVal,currentVal,incrementVal INT;
+select max_val,min_val,current_val,increment_val INTO maxVal,minVal,currentVal,incrementVal from sequence where seq_name = v_seq_name;
+SET currentVal = currentVal + incrementVal;
+IF currentVal > maxVal THEN SET currentVal = minVal;
+end if;
+update sequence set current_val = currentVal 
+where seq_name = v_seq_name; 
+return currval(v_seq_name); 
+end
+
+CREATE DEFINER=`vfc_sptsm_qa`@`%` FUNCTION `currval`(v_seq_name VARCHAR(50)) RETURNS int(11)
+begin          
+    declare value INT;           
+    set value = 0;           
+    select current_val into value  from sequence where seq_name = v_seq_name;     
+   return value;     
+end
+
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ----------------------------
+-- Table structure for sequence
+-- ----------------------------
+DROP TABLE IF EXISTS `sequence`;
+CREATE TABLE `sequence`  (
+  `seq_name` varchar(50) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT '',
+  `current_val` int(11) DEFAULT NULL,
+  `increment_val` int(11) DEFAULT NULL,
+  `min_val` int(11) DEFAULT NULL COMMENT '最小值',
+  `max_val` int(11) DEFAULT NULL COMMENT '最大值',
+  PRIMARY KEY (`seq_name`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = Compact;
+
+-- ----------------------------
+-- Records of sequence
+-- ----------------------------
+INSERT INTO `sequence` VALUES ('BACK_LIST_NO', 52, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('CITY_UNION_TERMINAL_TRANS_NO', 18730, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('GANZHOU_TERMINAL_TRANS_NO', 24180, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('GUIZHOU_TERMINAL_TRANS_NO', 5564, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('HAINAN_TERMINAL_TRANS_NO', 1292, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('HBEI_TERMINAL_TRANS_NO', 206813, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('HEFEI_TERMINAL_TRANS_NO', 236, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('HUAWEI_SEQ_ID', 37268, 1, 1, 65535);
+INSERT INTO `sequence` VALUES ('JILIN_TERMINAL_TRANS_NO', 199440, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('JINHUA_TERMINAL_TRANS_NO', 1, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('NINGBO_TERMINAL_TRANS_NO', 71293, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('QINGDAO_TERMINAL_TRANS_NO', 2029, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('SHENYANG_TERMINAL_TRANS_NO', 1090, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('SHENZHENCZ_TERMINAL_TRANS_NO', 8, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('SHENZHEN_TERMINAL_TRANS_NO', 49, 1, 1, 99);
+INSERT INTO `sequence` VALUES ('SHIJIAZHUANG_TERMINAL_TRANS_NO', 4210, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('SUZHOU_TERMINAL_TRANS_NO', 4301, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('S_CHECK_ID', 12930, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('S_PKG_ID', 101, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('S_REC_DATA_ID', 12591, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('S_TERMINAL_TRANS_NO', 12515, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('WEIFANG_TERMINAL_TRANS_NO', 614, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('WE_CHART_RECHARGE_SEQ', 1, NULL, 1, NULL);
+INSERT INTO `sequence` VALUES ('WORKER_ID_NO', 4721, 1, 1, 65535);
+INSERT INTO `sequence` VALUES ('WULUMUQI_JTB_TERMINAL_TRANS_NO', 310, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('WULUMUQI_TERMINAL_TRANS_NO', 267, 1, 1, 999999);
+INSERT INTO `sequence` VALUES ('WUXI_TERMINAL_TRANS_NO', 1082, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('XIAN_TERMINAL_TRANS_NO', 498019, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('YANTAI_TERMINAL_TRANS_NO', 6034, 1, 1, 999999999);
+INSERT INTO `sequence` VALUES ('ZHUHAI_TERMINAL_TRANS_NO', 4150, 1, 1, 999999999);
+
+SET FOREIGN_KEY_CHECKS = 1;
